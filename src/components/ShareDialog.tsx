@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { api } from "@/lib/api";
+import type { SimpleUser } from "@/lib/types";
 
 interface ShareUser {
   username: string;
@@ -18,6 +20,7 @@ export default function ShareDialog({
   const [shareUsername, setShareUsername] = useState("");
   const [permission, setPermission] = useState<"read" | "edit">("read");
   const [users, setUsers] = useState<ShareUser[]>([]);
+  const [allUsers, setAllUsers] = useState<SimpleUser[]>([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -38,6 +41,10 @@ export default function ShareDialog({
           if (d.permission) setLinkPermission(d.permission);
         }
       })
+      .catch(() => {});
+    api
+      .listUsers()
+      .then((list) => setAllUsers(list))
       .catch(() => {});
   }, [docId]);
 
@@ -136,12 +143,20 @@ export default function ShareDialog({
         {tab === "user" ? (
           <div>
             <div className="flex gap-2">
-              <input
+              <select
                 value={shareUsername}
                 onChange={(e) => setShareUsername(e.target.value)}
-                placeholder="输入对方用户名"
                 className="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm outline-none focus:border-zinc-800"
-              />
+              >
+                <option value="">选择用户…</option>
+                {allUsers
+                  .filter((u) => !users.some((s) => s.username === u.username))
+                  .map((u) => (
+                    <option key={u.id} value={u.username}>
+                      {u.username}
+                    </option>
+                  ))}
+              </select>
               <select
                 value={permission}
                 onChange={(e) =>

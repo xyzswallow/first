@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
-import { snapshotsRepo, versionsRepo } from "@/server/db";
+import { snapshotsRepo, versionsRepo, docsRepo } from "@/server/db";
 import { currentUser } from "@/server/currentUser";
 import { accessForUser } from "@/server/access";
+import { getDocSnapshot } from "@/server/ws/roomHub";
 
 // GET /api/documents/[id]/versions —— 版本列表（可读即可查看）
 export async function GET(
@@ -32,7 +33,12 @@ export async function POST(
   if (!access.canWrite)
     return NextResponse.json({ error: "无编辑权限" }, { status: 403 });
 
-  const content = snapshotsRepo.get(id) ?? "";
+  // 富文本：优先取活跃房间的实时 Y.Doc 状态，回退到已落库快照
+  const doc = docsRepo.findById(id);
+  const content =
+    (doc?.type === "doc" ? getDocSnapshot(id) : null) ??
+    snapshotsRepo.get(id) ??
+    "";
   if (!content)
     return NextResponse.json({ error: "文档暂无内容" }, { status: 400 });
 

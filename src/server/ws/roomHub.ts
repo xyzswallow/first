@@ -1,6 +1,6 @@
 import type { WebSocket } from "ws";
 import * as Y from "yjs";
-import { snapshotsRepo, docsRepo, logsRepo } from "../db";
+import { snapshotsRepo, docsRepo, logsRepo, versionsRepo } from "../db";
 
 /**
  * 协作中枢：
@@ -22,6 +22,8 @@ interface Room {
   clients: Set<Client>;
   ydoc?: Y.Doc;
   saveTimer?: NodeJS.Timeout;
+  lastVersionAt?: number;
+  lastEditor?: string;
 }
 
 const rooms = new Map<string, Room>();
@@ -72,7 +74,50 @@ function scheduleDocSave(room: Room) {
     const update = Y.encodeStateAsUpdate(room.ydoc);
     const b64 = Buffer.from(update).toString("base64");
     snapshotsRepo.save(room.docId, b64);
+    maybeRecordVersion(room, b64);
   }, 1500);
+}
+
+// 富文本版本节流：同一文档一段时间内只自动记录一次，避免版本泛滥
+const DOC_VERSION_INTERVAL_MS = 60_000;
+function maybeRecordVersion(room: Room, b64: string) {
+  if (!b64) return;
+  const now = Date.now();
+  const last = room.lastVersionAt ?? 0;
+  if (now - last <= DOC_VERSION_INTERVAL_MS) return;
+  if (versionsRepo.latestContent(room.docId) === b64) return;
+  versionsRepo.create(room.docId, b64, "edit", room.lastEditor ?? "匿名");
+  room.lastVersionAt = now;
+}
+
+/** 获取富文本文档的实时状态（base64 Yjs update），供手动保存版本使用 */
+export function getDocSnapshot(docId: string): string | null {
+  const room = sharedRooms.get(docId);
+  if (!room || room.type !== "doc" || !room.ydoc) return null;
+  const update = Y.encodeStateAsUpdate(room.ydoc);
+  return Buffer.from(update).toString("base64");
+}
+
+/**
+ * 恢复富文本到指定版本内容（base64 Yjs update）。
+ * 若房间活跃：把差异应用到房间 Y.Doc 并广播 update，使所有在线客户端实时更新；
+ * 无论是否活跃都会落库快照。
+ */
+export function restoreDocSnapshot(docId: string, b64: string): void {
+  snapshotsRepo.save(docId, b64);
+  const room = sharedRooms.get(docId);
+  if (!room || room.type !== "doc" || !room.ydoc) return;
+  try {
+    const target = new Uint8Array(Buffer.from(b64, "base64"));
+    // 应用目标状态到当前 Y.Doc（Yjs 会合并，得到差异 update 并广播）
+    const before = Y.encodeStateVector(room.ydoc);
+    Y.applyUpdate(room.ydoc, target, "restore");
+    const diff = Y.encodeStateAsUpdate(room.ydoc, before);
+    const payload = { t: "update", v: Buffer.from(diff).toString("base64") };
+    for (const c of room.clients) send(c.ws, payload);
+  } catch {
+    // 目标内容非法则仅落库
+  }
 }
 
 export function addClient(
@@ -162,6 +207,7 @@ function handleMessage(
       try {
         const update = new Uint8Array(Buffer.from(msg.v, "base64"));
         Y.applyUpdate(room.ydoc, update, client);
+        room.lastEditor = client.username;
         // 转发给其它客户端
         broadcast(room, client, { t: "update", v: msg.v });
         scheduleDocSave(room);

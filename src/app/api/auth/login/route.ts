@@ -14,8 +14,13 @@ export async function POST(req: Request) {
   const session = await getSession();
   session.userId = result.user.id;
   session.username = result.user.username;
+  session.isAdmin = result.user.is_admin === 1;
   await session.save();
   return NextResponse.json({
-    user: { userId: result.user.id, username: result.user.username },
+    user: {
+      userId: result.user.id,
+      username: result.user.username,
+      isAdmin: result.user.is_admin === 1,
+    },
   });
 }

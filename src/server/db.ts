@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   username TEXT UNIQUE NOT NULL,
   password_hash TEXT NOT NULL,
+  is_admin INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -66,10 +67,26 @@ CREATE TABLE IF NOT EXISTS document_versions (
 CREATE INDEX IF NOT EXISTS idx_document_versions_doc ON document_versions(doc_id, id DESC);
 `);
 
+// ---------- 迁移：为旧库补充 is_admin 列 ----------
+try {
+  const cols = db.prepare("PRAGMA table_info(users)").all() as {
+    name: string;
+  }[];
+  if (!cols.some((c) => c.name === "is_admin")) {
+    db.exec("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0");
+  }
+} catch {
+  // 忽略迁移错误
+}
+
+// 指定用户名 xue 为管理员（若存在）
+db.prepare("UPDATE users SET is_admin = 1 WHERE username = 'xue'").run();
+
 export interface UserRow {
   id: number;
   username: string;
   password_hash: string;
+  is_admin: number;
   created_at: string;
 }
 
@@ -105,6 +122,31 @@ export const usersRepo = {
   updatePassword(id: number, passwordHash: string): void {
     db.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(
       passwordHash,
+      id
+    );
+  },
+  /** 全部用户（管理后台用，含文档数量） */
+  listAll(): (Omit<UserRow, "password_hash"> & { doc_count: number })[] {
+    return db
+      .prepare(
+        `SELECT u.id, u.username, u.is_admin, u.created_at,
+                (SELECT COUNT(*) FROM documents d WHERE d.owner_id = u.id) AS doc_count
+         FROM users u ORDER BY u.id ASC`
+      )
+      .all() as (Omit<UserRow, "password_hash"> & { doc_count: number })[];
+  },
+  /** 用户清单（供分享选择，仅 id + username） */
+  listSimple(): { id: number; username: string }[] {
+    return db
+      .prepare("SELECT id, username FROM users ORDER BY username ASC")
+      .all() as { id: number; username: string }[];
+  },
+  remove(id: number): void {
+    db.prepare("DELETE FROM users WHERE id = ?").run(id);
+  },
+  setAdmin(id: number, isAdmin: boolean): void {
+    db.prepare("UPDATE users SET is_admin = ? WHERE id = ?").run(
+      isAdmin ? 1 : 0,
       id
     );
   },
@@ -163,6 +205,24 @@ export const docsRepo = {
     db.prepare(
       "UPDATE documents SET share_token = ?, share_permission = ? WHERE id = ?"
     ).run(token, permission, id);
+  },
+  /** 全部文档（管理后台用，含所有者名与版本数） */
+  listAll(): (DocumentRow & { owner_name: string; version_count: number })[] {
+    return db
+      .prepare(
+        `SELECT d.*, u.username AS owner_name,
+                (SELECT COUNT(*) FROM document_versions v WHERE v.doc_id = d.id) AS version_count
+         FROM documents d JOIN users u ON u.id = d.owner_id
+         ORDER BY d.updated_at DESC`
+      )
+      .all() as (DocumentRow & { owner_name: string; version_count: number })[];
+  },
+  /** 转移文档所属人（管理后台用） */
+  setOwner(id: string, ownerId: number): void {
+    db.prepare("UPDATE documents SET owner_id = ? WHERE id = ?").run(
+      ownerId,
+      id
+    );
   },
 };
 
@@ -267,6 +327,10 @@ export const versionsRepo = {
       )
       .get(docId) as { content: string } | undefined;
     return row?.content;
+  },
+  /** 删除单个版本（管理后台用） */
+  remove(id: number): void {
+    db.prepare("DELETE FROM document_versions WHERE id = ?").run(id);
   },
 };
 

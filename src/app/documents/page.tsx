@@ -17,5 +17,11 @@ export default async function DocumentsPage() {
       }))
     : [];
 
-  return <DocumentsClient username={user?.username ?? null} initialItems={items} />;
+  return (
+    <DocumentsClient
+      username={user?.username ?? null}
+      isAdmin={user?.isAdmin ?? false}
+      initialItems={items}
+    />
+  );
 }

@@ -39,6 +39,7 @@ export default function SheetPageClient({
         <VersionHistory
           docId={docId}
           canWrite={canWrite}
+          isOwner={isOwner}
           onClose={() => setShowHistory(false)}
         />
       )}

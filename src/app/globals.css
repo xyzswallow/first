@@ -108,3 +108,45 @@ textarea {
   height: 0;
   pointer-events: none;
 }
+/* 链接 */
+.prose-editor a {
+  color: #2563eb;
+  text-decoration: underline;
+  cursor: pointer;
+}
+/* 高亮 */
+.prose-editor mark {
+  background: #fef08a;
+  border-radius: 0.2em;
+  padding: 0 0.1em;
+}
+/* 下划线 */
+.prose-editor u {
+  text-decoration: underline;
+}
+/* 分割线 */
+.prose-editor hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 1.2em 0;
+}
+/* 任务列表 */
+.prose-editor ul[data-type="taskList"] {
+  list-style: none;
+  padding-left: 0.25em;
+}
+.prose-editor ul[data-type="taskList"] li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5em;
+  margin: 0.25em 0;
+}
+.prose-editor ul[data-type="taskList"] li > label {
+  margin-top: 0.25em;
+}
+.prose-editor ul[data-type="taskList"] li > div {
+  flex: 1;
+}
+.prose-editor ul[data-type="taskList"] li > div > p {
+  margin: 0;
+}

@@ -27,9 +27,11 @@ const TYPE_META: Record<DocType, { label: string; icon: string; color: string }>
 
 export default function DocumentsClient({
   username,
+  isAdmin,
   initialItems,
 }: {
   username: string | null;
+  isAdmin: boolean;
   initialItems: DocumentListItem[];
 }) {
   const router = useRouter();
@@ -104,6 +106,17 @@ export default function DocumentsClient({
                 className="absolute right-0 mt-1 w-40 overflow-hidden rounded-lg border border-gray-100 bg-white py-1 shadow-lg"
                 onMouseLeave={() => setUserMenu(false)}
               >
+                {isAdmin && (
+                  <button
+                    onClick={() => {
+                      setUserMenu(false);
+                      router.push("/admin");
+                    }}
+                    className="block w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50"
+                  >
+                    管理后台
+                  </button>
+                )}
                 <button
                   onClick={() => {
                     setUserMenu(false);

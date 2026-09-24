@@ -27,11 +27,13 @@ function formatTime(s: string): string {
 export default function VersionHistory({
   docId,
   canWrite,
+  isOwner,
   token,
   onClose,
 }: {
   docId: string;
   canWrite: boolean;
+  isOwner?: boolean;
   token?: string;
   onClose: () => void;
 }) {
@@ -76,6 +78,19 @@ export default function VersionHistory({
       load();
     } catch (e) {
       setError((e as Error).message || "恢复失败");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove(vid: number) {
+    if (!confirm("确定删除该版本？删除后不可恢复。")) return;
+    setBusy(true);
+    try {
+      await api.deleteVersion(docId, vid, token);
+      load();
+    } catch (e) {
+      setError((e as Error).message || "删除失败");
     } finally {
       setBusy(false);
     }
@@ -128,15 +143,26 @@ export default function VersionHistory({
                       {SOURCE_LABEL[v.source] ?? v.source}
                       {v.created_by ? ` · ${v.created_by}` : ""}
                     </span>
-                    {canWrite && (
-                      <button
-                        onClick={() => restore(v.id)}
-                        disabled={busy}
-                        className="rounded border border-gray-200 px-2 py-0.5 text-gray-600 transition hover:bg-white disabled:opacity-50"
-                      >
-                        恢复
-                      </button>
-                    )}
+                    <div className="flex items-center gap-1">
+                      {canWrite && (
+                        <button
+                          onClick={() => restore(v.id)}
+                          disabled={busy}
+                          className="rounded border border-gray-200 px-2 py-0.5 text-gray-600 transition hover:bg-white disabled:opacity-50"
+                        >
+                          恢复
+                        </button>
+                      )}
+                      {isOwner && (
+                        <button
+                          onClick={() => remove(v.id)}
+                          disabled={busy}
+                          className="rounded border border-gray-200 px-2 py-0.5 text-red-500 transition hover:bg-red-50 disabled:opacity-50"
+                        >
+                          删除
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </li>
               ))}

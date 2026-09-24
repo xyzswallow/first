@@ -6,6 +6,14 @@ import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
 import Collaboration from "@tiptap/extension-collaboration";
+import TextAlign from "@tiptap/extension-text-align";
+import Underline from "@tiptap/extension-underline";
+import Highlight from "@tiptap/extension-highlight";
+import { Color } from "@tiptap/extension-color";
+import TextStyle from "@tiptap/extension-text-style";
+import TaskList from "@tiptap/extension-task-list";
+import TaskItem from "@tiptap/extension-task-item";
+import Link from "@tiptap/extension-link";
 
 function toBase64(bytes: Uint8Array) {
   let bin = "";
@@ -110,6 +118,14 @@ export default function DocEditor({
       StarterKit.configure({ history: false }),
       Placeholder.configure({ placeholder: "开始输入内容…" }),
       Collaboration.configure({ document: ydocRef.current }),
+      TextAlign.configure({ types: ["heading", "paragraph"] }),
+      Underline,
+      TextStyle,
+      Color,
+      Highlight.configure({ multicolor: true }),
+      TaskList,
+      TaskItem.configure({ nested: true }),
+      Link.configure({ openOnClick: false, autolink: true }),
     ],
     immediatelyRender: false,
   });
@@ -161,6 +177,16 @@ function Toolbar({ editor }: { editor: NonNullable<ReturnType<typeof useEditor>>
     `rounded px-2 py-1 text-sm transition ${
       active ? "bg-zinc-200 text-zinc-900" : "text-gray-600 hover:bg-gray-100"
     }`;
+  const setLink = () => {
+    const prev = editor.getAttributes("link").href as string | undefined;
+    const url = window.prompt("请输入链接地址", prev ?? "https://");
+    if (url === null) return;
+    if (url === "") {
+      editor.chain().focus().extendMarkRange("link").unsetLink().run();
+      return;
+    }
+    editor.chain().focus().extendMarkRange("link").setLink({ href: url }).run();
+  };
   return (
     <div className="flex flex-wrap items-center gap-1">
       <button
@@ -176,11 +202,40 @@ function Toolbar({ editor }: { editor: NonNullable<ReturnType<typeof useEditor>>
         <i>I</i>
       </button>
       <button
+        onClick={() => editor.chain().focus().toggleUnderline().run()}
+        className={btn(editor.isActive("underline"))}
+      >
+        <u>U</u>
+      </button>
+      <button
         onClick={() => editor.chain().focus().toggleStrike().run()}
         className={btn(editor.isActive("strike"))}
       >
         <s>S</s>
       </button>
+      <button
+        onClick={() => editor.chain().focus().toggleHighlight().run()}
+        className={btn(editor.isActive("highlight"))}
+        title="高亮"
+      >
+        <span className="bg-yellow-200 px-0.5">H</span>
+      </button>
+      <label
+        className="flex items-center gap-1 rounded px-1 py-1 text-sm text-gray-600 hover:bg-gray-100"
+        title="字体颜色"
+      >
+        <span
+          className="h-3 w-3 rounded-full border border-gray-300"
+          style={{ background: editor.getAttributes("textStyle").color || "#111827" }}
+        />
+        <input
+          type="color"
+          className="h-0 w-0 opacity-0"
+          value={(editor.getAttributes("textStyle").color as string) || "#111827"}
+          onChange={(e) => editor.chain().focus().setColor(e.target.value).run()}
+        />
+        <span>色</span>
+      </label>
       <span className="mx-1 h-4 w-px bg-gray-200" />
       <button
         onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}
@@ -202,6 +257,35 @@ function Toolbar({ editor }: { editor: NonNullable<ReturnType<typeof useEditor>>
       </button>
       <span className="mx-1 h-4 w-px bg-gray-200" />
       <button
+        onClick={() => editor.chain().focus().setTextAlign("left").run()}
+        className={btn(editor.isActive({ textAlign: "left" }))}
+        title="左对齐"
+      >
+        ⬅
+      </button>
+      <button
+        onClick={() => editor.chain().focus().setTextAlign("center").run()}
+        className={btn(editor.isActive({ textAlign: "center" }))}
+        title="居中"
+      >
+        ↔
+      </button>
+      <button
+        onClick={() => editor.chain().focus().setTextAlign("right").run()}
+        className={btn(editor.isActive({ textAlign: "right" }))}
+        title="右对齐"
+      >
+        ➡
+      </button>
+      <button
+        onClick={() => editor.chain().focus().setTextAlign("justify").run()}
+        className={btn(editor.isActive({ textAlign: "justify" }))}
+        title="两端对齐"
+      >
+        ☰
+      </button>
+      <span className="mx-1 h-4 w-px bg-gray-200" />
+      <button
         onClick={() => editor.chain().focus().toggleBulletList().run()}
         className={btn(editor.isActive("bulletList"))}
       >
@@ -214,6 +298,12 @@ function Toolbar({ editor }: { editor: NonNullable<ReturnType<typeof useEditor>>
         1. 列表
       </button>
       <button
+        onClick={() => editor.chain().focus().toggleTaskList().run()}
+        className={btn(editor.isActive("taskList"))}
+      >
+        ✓ 待办
+      </button>
+      <button
         onClick={() => editor.chain().focus().toggleBlockquote().run()}
         className={btn(editor.isActive("blockquote"))}
       >
@@ -224,6 +314,33 @@ function Toolbar({ editor }: { editor: NonNullable<ReturnType<typeof useEditor>>
         className={btn(editor.isActive("codeBlock"))}
       >
         代码
+      </button>
+      <button onClick={setLink} className={btn(editor.isActive("link"))}>
+        链接
+      </button>
+      <button
+        onClick={() => editor.chain().focus().setHorizontalRule().run()}
+        className={btn(false)}
+        title="分割线"
+      >
+        —
+      </button>
+      <span className="mx-1 h-4 w-px bg-gray-200" />
+      <button
+        onClick={() => editor.chain().focus().undo().run()}
+        className={btn(false)}
+        disabled={!editor.can().undo()}
+        title="撤销"
+      >
+        ↶
+      </button>
+      <button
+        onClick={() => editor.chain().focus().redo().run()}
+        className={btn(false)}
+        disabled={!editor.can().redo()}
+        title="重做"
+      >
+        ↷
       </button>
     </div>
   );
