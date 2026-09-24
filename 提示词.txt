@@ -1,8 +1,0 @@
-我想开发一个web在线文档编辑系统，可以参考腾讯文档以及金山文档的功能，ui界面最好设计的优雅一些
-
-使用以下技术栈：
-Next.js 16
-React 19
-TypeScript 5
-Tailwind CSS v4
-SQLite
