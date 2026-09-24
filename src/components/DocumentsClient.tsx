@@ -168,19 +168,6 @@ export default function DocumentsClient({
                 >
                   <span className="text-zinc-700">✎</span> 富文本文档
                 </button>
-                <div className="my-1 border-t border-gray-100" />
-                <button
-                  disabled
-                  className="flex w-full cursor-not-allowed items-center gap-2 px-4 py-2.5 text-left text-sm text-gray-300"
-                >
-                  <span>▤</span> 演示文稿（即将推出）
-                </button>
-                <button
-                  disabled
-                  className="flex w-full cursor-not-allowed items-center gap-2 px-4 py-2.5 text-left text-sm text-gray-300"
-                >
-                  <span>◈</span> 思维导图（即将推出）
-                </button>
               </div>
             )}
           </div>
