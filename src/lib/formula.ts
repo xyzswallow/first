@@ -5,15 +5,94 @@ export const FUNCTIONS = [
   "SUM",
   "AVERAGE",
   "COUNT",
+  "COUNTA",
   "MAX",
   "MIN",
   "PRODUCT",
   "ROUND",
+  "ROUNDUP",
+  "ROUNDDOWN",
+  "INT",
+  "MOD",
+  "POWER",
+  "SQRT",
   "ABS",
+  "SUMIF",
+  "COUNTIF",
   "IF",
+  "AND",
+  "OR",
+  "NOT",
+  "LEN",
+  "LEFT",
+  "RIGHT",
+  "MID",
+  "CONCAT",
+  "UPPER",
+  "LOWER",
+  "TRIM",
+  "VLOOKUP",
+  "HLOOKUP",
+  "INDEX",
+  "MATCH",
 ] as const;
 
 export type FunctionName = (typeof FUNCTIONS)[number];
+
+// 函数元信息：用于公式联想提示
+export interface FunctionMeta {
+  name: FunctionName;
+  signature: string;
+  desc: string;
+}
+
+export const FUNCTION_META: FunctionMeta[] = [
+  { name: "SUM", signature: "SUM(区间/数值…)", desc: "求和" },
+  { name: "AVERAGE", signature: "AVERAGE(区间/数值…)", desc: "求平均值" },
+  { name: "COUNT", signature: "COUNT(区间/数值…)", desc: "统计数值个数" },
+  { name: "COUNTA", signature: "COUNTA(区间/数值…)", desc: "统计非空个数" },
+  { name: "MAX", signature: "MAX(区间/数值…)", desc: "求最大值" },
+  { name: "MIN", signature: "MIN(区间/数值…)", desc: "求最小值" },
+  { name: "PRODUCT", signature: "PRODUCT(数值…)", desc: "求乘积" },
+  { name: "ROUND", signature: "ROUND(数值, 位数)", desc: "四舍五入" },
+  { name: "ROUNDUP", signature: "ROUNDUP(数值, 位数)", desc: "向上舍入" },
+  { name: "ROUNDDOWN", signature: "ROUNDDOWN(数值, 位数)", desc: "向下舍入" },
+  { name: "INT", signature: "INT(数值)", desc: "向下取整" },
+  { name: "MOD", signature: "MOD(数值, 除数)", desc: "求余数" },
+  { name: "POWER", signature: "POWER(底数, 指数)", desc: "求幂" },
+  { name: "SQRT", signature: "SQRT(数值)", desc: "平方根" },
+  { name: "ABS", signature: "ABS(数值)", desc: "绝对值" },
+  { name: "SUMIF", signature: "SUMIF(区间, 条件, [求和区间])", desc: "条件求和" },
+  { name: "COUNTIF", signature: "COUNTIF(区间, 条件)", desc: "条件计数" },
+  { name: "IF", signature: "IF(条件, 真值, 假值)", desc: "条件判断" },
+  { name: "AND", signature: "AND(条件…)", desc: "逻辑与" },
+  { name: "OR", signature: "OR(条件…)", desc: "逻辑或" },
+  { name: "NOT", signature: "NOT(条件)", desc: "逻辑非" },
+  { name: "LEN", signature: "LEN(文本)", desc: "文本长度" },
+  { name: "LEFT", signature: "LEFT(文本, 个数)", desc: "取左侧字符" },
+  { name: "RIGHT", signature: "RIGHT(文本, 个数)", desc: "取右侧字符" },
+  { name: "MID", signature: "MID(文本, 起始, 个数)", desc: "取中间字符" },
+  { name: "CONCAT", signature: "CONCAT(文本…)", desc: "拼接文本" },
+  { name: "UPPER", signature: "UPPER(文本)", desc: "转大写" },
+  { name: "LOWER", signature: "LOWER(文本)", desc: "转小写" },
+  { name: "TRIM", signature: "TRIM(文本)", desc: "去除首尾空格" },
+  {
+    name: "VLOOKUP",
+    signature: "VLOOKUP(查找值, 区间, 列号, [精确])",
+    desc: "垂直查找",
+  },
+  {
+    name: "HLOOKUP",
+    signature: "HLOOKUP(查找值, 区间, 行号, [精确])",
+    desc: "水平查找",
+  },
+  { name: "INDEX", signature: "INDEX(区间, 行号, [列号])", desc: "按位置取值" },
+  {
+    name: "MATCH",
+    signature: "MATCH(查找值, 区间, [匹配类型])",
+    desc: "查找位置",
+  },
+];
 
 // 列号 -> 字母（0 -> A, 25 -> Z, 26 -> AA）
 export function colLabel(c: number): string {
@@ -342,6 +421,96 @@ function toNumber(v: CellValue): number {
   return isNaN(n) ? 0 : n;
 }
 
+// SUMIF/COUNTIF 条件匹配：支持数值/文本相等，以及 ">10" "<=5" "<>x" 等比较串
+function matchCriteria(cell: CellValue, criteria: CellValue): boolean {
+  if (typeof criteria === "string") {
+    const m = /^(<=|>=|<>|<|>|=)?\s*(.*)$/.exec(criteria.trim());
+    if (m && m[1]) {
+      const op = m[1];
+      const rhs = m[2];
+      const rn = parseFloat(rhs);
+      if (!isNaN(rn)) {
+        const cn = toNumber(cell);
+        switch (op) {
+          case ">":
+            return cn > rn;
+          case "<":
+            return cn < rn;
+          case ">=":
+            return cn >= rn;
+          case "<=":
+            return cn <= rn;
+          case "=":
+            return cn === rn;
+          case "<>":
+            return cn !== rn;
+        }
+      }
+      const cs = String(cell);
+      if (op === "=") return cs === rhs;
+      if (op === "<>") return cs !== rhs;
+    }
+  }
+  // 无操作符：直接相等比较（数值优先）
+  const cn = parseFloat(String(criteria));
+  if (!isNaN(cn)) return toNumber(cell) === cn;
+  return String(cell) === String(criteria);
+}
+
+// 计算区间的行列边界（0 基）。keys 形如 "行:列"，返回 null 表示无有效单元格
+function rangeGeometry(
+  keys: string[]
+): { rlo: number; rhi: number; clo: number; chi: number } | null {
+  let rlo = Infinity;
+  let rhi = -Infinity;
+  let clo = Infinity;
+  let chi = -Infinity;
+  for (const k of keys) {
+    const [rs, cs] = k.split(":");
+    const r = parseInt(rs, 10);
+    const c = parseInt(cs, 10);
+    if (isNaN(r) || isNaN(c)) continue;
+    if (r < rlo) rlo = r;
+    if (r > rhi) rhi = r;
+    if (c < clo) clo = c;
+    if (c > chi) chi = c;
+  }
+  if (rlo === Infinity) return null;
+  return { rlo, rhi, clo, chi };
+}
+
+// 宽松相等：两者可转为相同数值则按数值比较，否则按字符串（忽略大小写）比较
+function looseEqual(a: CellValue, b: CellValue): boolean {
+  const an = parseFloat(String(a));
+  const bn = parseFloat(String(b));
+  if (
+    !isNaN(an) &&
+    !isNaN(bn) &&
+    String(an) === String(a).trim() &&
+    String(bn) === String(b).trim()
+  ) {
+    return an === bn;
+  }
+  return String(a).toLowerCase() === String(b).toLowerCase();
+}
+
+// 大小比较：数值优先，否则字符串比较。返回负/零/正
+function compareValues(a: CellValue, b: CellValue): number {
+  const an = parseFloat(String(a));
+  const bn = parseFloat(String(b));
+  if (
+    !isNaN(an) &&
+    !isNaN(bn) &&
+    String(an) === String(a).trim() &&
+    String(bn) === String(b).trim()
+  ) {
+    return an - bn;
+  }
+  const as = String(a);
+  const bs = String(b);
+  return as < bs ? -1 : as > bs ? 1 : 0;
+}
+
 // 单个单元格求值上下文：resolve 用于取其它单元格的最终计算值
 function evalNode(
   node: Node,
@@ -432,6 +601,21 @@ function evalNode(
           });
           return cnt;
         }
+        case "COUNTA": {
+          let cnt = 0;
+          node.args.forEach((n) => {
+            if (n.kind === "range") {
+              n.keys.forEach((k) => {
+                const v = resolve(k);
+                if (v !== "" && v !== undefined) cnt++;
+              });
+            } else {
+              const v = evalNode(n, resolve);
+              if (v !== "") cnt++;
+            }
+          });
+          return cnt;
+        }
         case "MAX":
           node.args.forEach(collectNums);
           return nums.length ? Math.max(...nums) : 0;
@@ -446,8 +630,68 @@ function evalNode(
           const f = Math.pow(10, digits);
           return Math.round(val * f) / f;
         }
+        case "ROUNDUP": {
+          const val = toNumber(evalNode(node.args[0], resolve));
+          const digits = node.args[1]
+            ? toNumber(evalNode(node.args[1], resolve))
+            : 0;
+          const f = Math.pow(10, digits);
+          return (val < 0 ? -1 : 1) * Math.ceil(Math.abs(val) * f) / f;
+        }
+        case "ROUNDDOWN": {
+          const val = toNumber(evalNode(node.args[0], resolve));
+          const digits = node.args[1]
+            ? toNumber(evalNode(node.args[1], resolve))
+            : 0;
+          const f = Math.pow(10, digits);
+          return (val < 0 ? -1 : 1) * Math.floor(Math.abs(val) * f) / f;
+        }
+        case "INT":
+          return Math.floor(toNumber(evalNode(node.args[0], resolve)));
+        case "MOD": {
+          const a = toNumber(evalNode(node.args[0], resolve));
+          const b = toNumber(evalNode(node.args[1], resolve));
+          if (b === 0) throw new Error("#DIV/0!");
+          return a - b * Math.floor(a / b);
+        }
+        case "POWER":
+          return Math.pow(
+            toNumber(evalNode(node.args[0], resolve)),
+            toNumber(evalNode(node.args[1], resolve))
+          );
+        case "SQRT": {
+          const v = toNumber(evalNode(node.args[0], resolve));
+          if (v < 0) throw new Error("#NUM!");
+          return Math.sqrt(v);
+        }
         case "ABS":
           return Math.abs(toNumber(evalNode(node.args[0], resolve)));
+        case "SUMIF": {
+          const rangeNode = node.args[0];
+          if (rangeNode?.kind !== "range") throw new Error("#VALUE!");
+          const criteria = evalNode(node.args[1], resolve);
+          const sumNode = node.args[2];
+          const sumKeys =
+            sumNode?.kind === "range" ? sumNode.keys : rangeNode.keys;
+          let total = 0;
+          rangeNode.keys.forEach((k, idx) => {
+            if (matchCriteria(resolve(k), criteria)) {
+              const sk = sumKeys[idx];
+              if (sk !== undefined) total += toNumber(resolve(sk));
+            }
+          });
+          return total;
+        }
+        case "COUNTIF": {
+          const rangeNode = node.args[0];
+          if (rangeNode?.kind !== "range") throw new Error("#VALUE!");
+          const criteria = evalNode(node.args[1], resolve);
+          let cnt = 0;
+          rangeNode.keys.forEach((k) => {
+            if (matchCriteria(resolve(k), criteria)) cnt++;
+          });
+          return cnt;
+        }
         case "IF": {
           const cond = toNumber(evalNode(node.args[0], resolve));
           return cond !== 0
@@ -455,6 +699,157 @@ function evalNode(
             : node.args[2]
               ? evalNode(node.args[2], resolve)
               : 0;
+        }
+        case "AND":
+          return node.args.every(
+            (a) => toNumber(evalNode(a, resolve)) !== 0
+          )
+            ? 1
+            : 0;
+        case "OR":
+          return node.args.some((a) => toNumber(evalNode(a, resolve)) !== 0)
+            ? 1
+            : 0;
+        case "NOT":
+          return toNumber(evalNode(node.args[0], resolve)) === 0 ? 1 : 0;
+        case "LEN":
+          return String(evalNode(node.args[0], resolve)).length;
+        case "LEFT": {
+          const s = String(evalNode(node.args[0], resolve));
+          const n = node.args[1]
+            ? toNumber(evalNode(node.args[1], resolve))
+            : 1;
+          return s.slice(0, Math.max(0, n));
+        }
+        case "RIGHT": {
+          const s = String(evalNode(node.args[0], resolve));
+          const n = node.args[1]
+            ? toNumber(evalNode(node.args[1], resolve))
+            : 1;
+          return n <= 0 ? "" : s.slice(-n);
+        }
+        case "MID": {
+          const s = String(evalNode(node.args[0], resolve));
+          const start = toNumber(evalNode(node.args[1], resolve));
+          const len = toNumber(evalNode(node.args[2], resolve));
+          return s.slice(Math.max(0, start - 1), Math.max(0, start - 1) + Math.max(0, len));
+        }
+        case "CONCAT": {
+          let out = "";
+          node.args.forEach((n) => {
+            if (n.kind === "range") {
+              n.keys.forEach((k) => {
+                const v = resolve(k);
+                if (v !== "" && v !== undefined) out += String(v);
+              });
+            } else {
+              out += String(evalNode(n, resolve));
+            }
+          });
+          return out;
+        }
+        case "UPPER":
+          return String(evalNode(node.args[0], resolve)).toUpperCase();
+        case "LOWER":
+          return String(evalNode(node.args[0], resolve)).toLowerCase();
+        case "TRIM":
+          return String(evalNode(node.args[0], resolve)).trim();
+        case "VLOOKUP":
+        case "HLOOKUP": {
+          const rangeNode = node.args[1];
+          if (rangeNode?.kind !== "range") throw new Error("#VALUE!");
+          const geo = rangeGeometry(rangeNode.keys);
+          if (!geo) throw new Error("#REF!");
+          const lookup = evalNode(node.args[0], resolve);
+          const idx = toNumber(evalNode(node.args[2], resolve));
+          // 第四参数：TRUE/非 0 近似匹配，默认精确匹配
+          const approx = node.args[3]
+            ? toNumber(evalNode(node.args[3], resolve)) !== 0
+            : false;
+          const horizontal = node.name === "HLOOKUP";
+          // 查找序列：VLOOKUP 用首列，HLOOKUP 用首行
+          const line = horizontal
+            ? Array.from({ length: geo.chi - geo.clo + 1 }, (_, i) => geo.clo + i)
+            : Array.from({ length: geo.rhi - geo.rlo + 1 }, (_, i) => geo.rlo + i);
+          const cellAt = (r: number, c: number) => resolve(`${r}:${c}`);
+          let hitPos = -1;
+          for (let i = 0; i < line.length; i++) {
+            const v = horizontal
+              ? cellAt(geo.rlo, line[i])
+              : cellAt(line[i], geo.clo);
+            if (approx) {
+              if (compareValues(v, lookup) <= 0) hitPos = i;
+              else break;
+            } else if (looseEqual(v, lookup)) {
+              hitPos = i;
+              break;
+            }
+          }
+          if (hitPos < 0) throw new Error("#N/A");
+          if (idx < 1) throw new Error("#VALUE!");
+          return horizontal
+            ? cellAt(geo.rlo + idx - 1, line[hitPos])
+            : cellAt(line[hitPos], geo.clo + idx - 1);
+        }
+        case "INDEX": {
+          const rangeNode = node.args[0];
+          if (rangeNode?.kind !== "range") throw new Error("#VALUE!");
+          const geo = rangeGeometry(rangeNode.keys);
+          if (!geo) throw new Error("#REF!");
+          const rows = geo.rhi - geo.rlo + 1;
+          const rowArg = toNumber(evalNode(node.args[1], resolve));
+          const colArg = node.args[2]
+            ? toNumber(evalNode(node.args[2], resolve))
+            : 0;
+          let rr: number;
+          let cc: number;
+          // 单行/单列区间允许只传一个位置参数
+          if (!node.args[2]) {
+            if (rows === 1) {
+              rr = geo.rlo;
+              cc = geo.clo + rowArg - 1;
+            } else {
+              rr = geo.rlo + rowArg - 1;
+              cc = geo.clo;
+            }
+          } else {
+            rr = geo.rlo + rowArg - 1;
+            cc = geo.clo + colArg - 1;
+          }
+          if (rr < geo.rlo || rr > geo.rhi || cc < geo.clo || cc > geo.chi)
+            throw new Error("#REF!");
+          return resolve(`${rr}:${cc}`);
+        }
+        case "MATCH": {
+          const rangeNode = node.args[1];
+          if (rangeNode?.kind !== "range") throw new Error("#VALUE!");
+          const geo = rangeGeometry(rangeNode.keys);
+          if (!geo) throw new Error("#REF!");
+          const lookup = evalNode(node.args[0], resolve);
+          // 匹配类型：0 精确；1(默认) 小于等于的最大值；-1 大于等于的最小值
+          const mType = node.args[2]
+            ? toNumber(evalNode(node.args[2], resolve))
+            : 1;
+          const horizontal = geo.rhi === geo.rlo;
+          const seq = horizontal
+            ? Array.from({ length: geo.chi - geo.clo + 1 }, (_, i) => resolve(`${geo.rlo}:${geo.clo + i}`))
+            : Array.from({ length: geo.rhi - geo.rlo + 1 }, (_, i) => resolve(`${geo.rlo + i}:${geo.clo}`));
+          let pos = -1;
+          if (mType === 0) {
+            pos = seq.findIndex((v) => looseEqual(v, lookup));
+          } else if (mType === 1) {
+            for (let i = 0; i < seq.length; i++) {
+              if (compareValues(seq[i], lookup) <= 0) pos = i;
+              else break;
+            }
+          } else {
+            for (let i = 0; i < seq.length; i++) {
+              if (compareValues(seq[i], lookup) >= 0) pos = i;
+              else break;
+            }
+          }
+          if (pos < 0) throw new Error("#N/A");
+          return pos + 1;
         }
         default:
           throw new Error(`未知函数 ${node.name}`);

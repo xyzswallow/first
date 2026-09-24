@@ -8,6 +8,7 @@ import {
   computeSheet,
   isFormula,
   FUNCTIONS,
+  FUNCTION_META,
 } from "@/lib/formula";
 
 interface SheetData {
@@ -49,6 +50,8 @@ export default function SheetEditor({
   const [selStart, setSelStart] = useState<string | null>(null);
   const [selEnd, setSelEnd] = useState<string | null>(null);
   const dragging = useRef(false);
+  // 公式函数联想：过滤出的候选函数与高亮索引
+  const [suggestIdx, setSuggestIdx] = useState(0);
 
   const dataRef = useRef(data);
   dataRef.current = data;
@@ -145,6 +148,59 @@ export default function SheetEditor({
     [send]
   );
 
+  // 批量写入（粘贴用）：一次性更新 state，逐个广播 op
+  const commitCells = useCallback(
+    (updates: { key: string; value: string }[]) => {
+      if (updates.length === 0) return;
+      setData((prev) => {
+        const cells = { ...prev.cells };
+        for (const u of updates) cells[u.key] = u.value;
+        return { ...prev, cells };
+      });
+      for (const u of updates) send({ t: "op", data: u });
+    },
+    [send]
+  );
+
+  // ---------- 撤销/重做 ----------
+  const historyRef = useRef<{ undo: Record<string, string>[]; redo: Record<string, string>[] }>({
+    undo: [],
+    redo: [],
+  });
+  // 变更前记录当前 cells 快照
+  const pushHistory = useCallback(() => {
+    historyRef.current.undo.push({ ...dataRef.current.cells });
+    if (historyRef.current.undo.length > 100) historyRef.current.undo.shift();
+    historyRef.current.redo = [];
+  }, []);
+  // 将 cells 恢复到目标快照，并广播差异 op
+  const applyCellsSnapshot = useCallback(
+    (target: Record<string, string>) => {
+      const cur = dataRef.current.cells;
+      const keys = new Set([...Object.keys(cur), ...Object.keys(target)]);
+      const ops: { key: string; value: string }[] = [];
+      keys.forEach((k) => {
+        const nv = target[k] ?? "";
+        if ((cur[k] ?? "") !== nv) ops.push({ key: k, value: nv });
+      });
+      setData((prev) => ({ ...prev, cells: { ...target } }));
+      for (const op of ops) send({ t: "op", data: op });
+    },
+    [send]
+  );
+  const undo = useCallback(() => {
+    const h = historyRef.current;
+    if (h.undo.length === 0) return;
+    h.redo.push({ ...dataRef.current.cells });
+    applyCellsSnapshot(h.undo.pop()!);
+  }, [applyCellsSnapshot]);
+  const redo = useCallback(() => {
+    const h = historyRef.current;
+    if (h.redo.length === 0) return;
+    h.undo.push({ ...dataRef.current.cells });
+    applyCellsSnapshot(h.redo.pop()!);
+  }, [applyCellsSnapshot]);
+
   const headerCols = useMemo(
     () => Array.from({ length: data.cols }, (_, c) => colLabel(c)),
     [data.cols]
@@ -160,13 +216,20 @@ export default function SheetEditor({
   }
 
   const inputRef = useRef<HTMLInputElement | null>(null);
+  // 网格容器：编辑结束后重新聚焦，确保 Ctrl+Z 等快捷键生效
+  const gridRef = useRef<HTMLDivElement | null>(null);
+  const focusGrid = useCallback(() => {
+    requestAnimationFrame(() => gridRef.current?.focus());
+  }, []);
 
   // 提交当前编辑
   const commitDraft = useCallback(() => {
     const key = activeRef.current;
     if (!key) return;
+    if ((dataRef.current.cells[key] ?? "") === draftRef.current) return;
+    pushHistory();
     commitCell(key, draftRef.current);
-  }, [commitCell]);
+  }, [commitCell, pushHistory]);
 
   // 开始编辑（进入编辑态并聚焦）
   const startEditing = useCallback((initial: string) => {
@@ -189,8 +252,9 @@ export default function SheetEditor({
       setSelEnd(nk);
       setEditing(false);
       setDraft(dataRef.current.cells[nk] ?? "");
+      focusGrid();
     },
-    []
+    [focusGrid]
   );
 
   // 向公式中插入引用/区间
@@ -203,6 +267,14 @@ export default function SheetEditor({
     requestAnimationFrame(() => inputRef.current?.focus());
   }, []);
 
+  // 公式是否处于"期望引用"的位置：末尾为 = ( , 或运算符时，点选单元格才插入引用
+  const expectsRef = useCallback((text: string) => {
+    if (!isFormula(text)) return false;
+    const trimmed = text.trimEnd();
+    const last = trimmed[trimmed.length - 1] ?? "";
+    return "=([{,+-*/^&<>%:".includes(last);
+  }, []);
+
   // 单元格鼠标按下
   const onCellMouseDown = useCallback(
     (e: React.MouseEvent, key: string) => {
@@ -210,8 +282,8 @@ export default function SheetEditor({
         setActive(key);
         return;
       }
-      // 编辑公式时：点选/框选插入引用，保持输入焦点
-      if (editingRef.current && isFormula(draftRef.current)) {
+      // 编辑公式且光标处于期望引用位置时：点选/框选插入引用，保持输入焦点
+      if (editingRef.current && expectsRef(draftRef.current)) {
         e.preventDefault();
         dragging.current = true;
         setSelStart(key);
@@ -227,7 +299,7 @@ export default function SheetEditor({
       setSelStart(key);
       setSelEnd(key);
     },
-    [canWrite, commitDraft]
+    [canWrite, commitDraft, expectsRef]
   );
 
   const onCellMouseEnter = useCallback((key: string) => {
@@ -242,7 +314,7 @@ export default function SheetEditor({
       dragging.current = false;
       if (
         editingRef.current &&
-        isFormula(draftRef.current) &&
+        expectsRef(draftRef.current) &&
         selStart
       ) {
         insertRef(selStart, selEnd ?? selStart);
@@ -250,21 +322,83 @@ export default function SheetEditor({
     }
     window.addEventListener("mouseup", onUp);
     return () => window.removeEventListener("mouseup", onUp);
-  }, [selStart, selEnd, insertRef]);
+  }, [selStart, selEnd, insertRef, expectsRef]);
 
-  // 网格键盘：未编辑时输入即编辑 / 方向键移动 / 删除清空
+  // 网格键盘：未编辑时输入即编辑 / 方向键移动 / 删除清空 / Excel 快捷键
   const onGridKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
-      if (!canWrite || !activeRef.current) return;
+      if (!activeRef.current) return;
       if (editingRef.current) return; // 编辑态交给 input 处理
       const k = e.key;
+      const mod = e.ctrlKey || e.metaKey;
+
+      // 撤销 / 重做
+      if (mod && !e.shiftKey && (k === "z" || k === "Z")) {
+        e.preventDefault();
+        if (canWrite) undo();
+        return;
+      }
+      if (
+        mod &&
+        ((k === "y" || k === "Y") || (e.shiftKey && (k === "z" || k === "Z")))
+      ) {
+        e.preventDefault();
+        if (canWrite) redo();
+        return;
+      }
+      // 复制 / 剪切：把当前单元格原始内容写入剪贴板
+      if (mod && (k === "c" || k === "C" || k === "x" || k === "X")) {
+        const raw = dataRef.current.cells[activeRef.current] ?? "";
+        navigator.clipboard?.writeText(raw).catch(() => {});
+        if ((k === "x" || k === "X") && canWrite) {
+          e.preventDefault();
+          pushHistory();
+          commitCell(activeRef.current, "");
+          setDraft("");
+        }
+        return;
+      }
+      // 粘贴：支持多行多列 TSV
+      if (mod && (k === "v" || k === "V")) {
+        if (!canWrite) return;
+        e.preventDefault();
+        navigator.clipboard
+          ?.readText()
+          .then((text) => {
+            if (!text) return;
+            const start = activeRef.current;
+            if (!start) return;
+            const [r0, c0] = parseKey(start);
+            const rows = text.replace(/\r\n?$/g, "").split(/\r\n|\n|\r/);
+            const updates: { key: string; value: string }[] = [];
+            rows.forEach((line, dr) => {
+              line.split("\t").forEach((val, dc) => {
+                const r = r0 + dr;
+                const c = c0 + dc;
+                if (r < dataRef.current.rows && c < dataRef.current.cols) {
+                  updates.push({ key: `${r}:${c}`, value: val });
+                }
+              });
+            });
+            if (updates.length) {
+              pushHistory();
+              commitCells(updates);
+            }
+          })
+          .catch(() => {});
+        return;
+      }
+
       if (k === "Enter" || k === "F2") {
+        if (!canWrite) return;
         e.preventDefault();
         startEditing(dataRef.current.cells[activeRef.current] ?? "");
         return;
       }
       if (k === "Backspace" || k === "Delete") {
+        if (!canWrite) return;
         e.preventDefault();
+        pushHistory();
         commitCell(activeRef.current, "");
         setDraft("");
         return;
@@ -284,23 +418,112 @@ export default function SheetEditor({
         moveActive(0, -1);
         return;
       }
-      if (k === "ArrowRight" || k === "Tab") {
+      if (k === "ArrowRight") {
         e.preventDefault();
         moveActive(0, 1);
         return;
       }
+      if (k === "Tab") {
+        e.preventDefault();
+        moveActive(0, e.shiftKey ? -1 : 1);
+        return;
+      }
+      // Home：行首；Ctrl+Home：表首
+      if (k === "Home") {
+        e.preventDefault();
+        const [r] = parseKey(activeRef.current);
+        const nk = mod ? "0:0" : `${r}:0`;
+        setActive(nk);
+        setSelStart(nk);
+        setSelEnd(nk);
+        setDraft(dataRef.current.cells[nk] ?? "");
+        return;
+      }
+      // End：行尾；Ctrl+End：表尾
+      if (k === "End") {
+        e.preventDefault();
+        const [r] = parseKey(activeRef.current);
+        const lastCol = dataRef.current.cols - 1;
+        const lastRow = dataRef.current.rows - 1;
+        const nk = mod ? `${lastRow}:${lastCol}` : `${r}:${lastCol}`;
+        setActive(nk);
+        setSelStart(nk);
+        setSelEnd(nk);
+        setDraft(dataRef.current.cells[nk] ?? "");
+        return;
+      }
+      if (!canWrite) return;
       // 可打印字符：直接进入编辑并以该字符起始
-      if (k.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      if (k.length === 1 && !mod && !e.altKey) {
         e.preventDefault();
         startEditing(k);
       }
     },
-    [canWrite, commitCell, moveActive, startEditing]
+    [canWrite, commitCell, commitCells, moveActive, startEditing, undo, redo, pushHistory]
   );
+
+  // 公式联想：取 draft 末尾正在输入的函数名前缀，匹配候选函数
+  const suggestions = useMemo(() => {
+    if (!editing) return [];
+    const m = /([A-Za-z]+)$/.exec(draft);
+    if (!m) return [];
+    const prefix = m[1].toUpperCase();
+    if (isFormula(draft)) {
+      // 公式内：函数名前应为 = ( , 或运算符
+      const before = draft[draft.length - m[1].length - 1] ?? "=";
+      if (!"=(+-*/^,<> ".includes(before)) return [];
+    } else {
+      // 未加 = 时：仅当整段就是这串字母（从头输入函数名）才联想
+      if (draft !== m[1]) return [];
+    }
+    return FUNCTION_META.filter((f) => f.name.startsWith(prefix));
+  }, [editing, draft]);
+  const suggestionsRef = useRef(suggestions);
+  suggestionsRef.current = suggestions;
+  const suggestIdxRef = useRef(suggestIdx);
+  suggestIdxRef.current = suggestIdx;
+
+  useEffect(() => {
+    setSuggestIdx(0);
+  }, [suggestions.length]);
+
+  // 应用联想：把末尾输入的前缀替换为完整函数名并补 "("；未加 = 时自动补前导 =
+  const applySuggestion = useCallback((name: string) => {
+    setDraft((prev) => {
+      const replaced = prev.replace(/([A-Za-z]+)$/, `${name}(`);
+      return isFormula(replaced) ? replaced : `=${replaced}`;
+    });
+    setSuggestIdx(0);
+    requestAnimationFrame(() => inputRef.current?.focus());
+  }, []);
 
   // input 内键盘
   const onInputKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLInputElement>) => {
+      const sugg = suggestionsRef.current;
+      // 联想面板打开时优先处理选择/确认/关闭
+      if (sugg.length > 0) {
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          setSuggestIdx((i) => (i + 1) % sugg.length);
+          return;
+        }
+        if (e.key === "ArrowUp") {
+          e.preventDefault();
+          setSuggestIdx((i) => (i - 1 + sugg.length) % sugg.length);
+          return;
+        }
+        if (e.key === "Enter" || e.key === "Tab") {
+          e.preventDefault();
+          applySuggestion(sugg[suggestIdxRef.current].name);
+          return;
+        }
+        if (e.key === "Escape") {
+          e.preventDefault();
+          setSuggestIdx(-1);
+          return;
+        }
+      }
       if (e.key === "Enter") {
         e.preventDefault();
         commitDraft();
@@ -315,9 +538,10 @@ export default function SheetEditor({
         e.preventDefault();
         setEditing(false);
         setDraft(dataRef.current.cells[activeRef.current ?? ""] ?? "");
+        focusGrid();
       }
     },
-    [commitDraft, moveActive]
+    [commitDraft, moveActive, applySuggestion, focusGrid]
   );
 
   // 插入函数模板到公式
@@ -408,27 +632,41 @@ export default function SheetEditor({
           {activeLabel || "—"}
         </span>
         <span className="text-gray-400">fx</span>
-        <input
-          value={formulaBarValue}
-          disabled={!canWrite || !active}
-          placeholder={active ? "输入内容或以 = 开始输入公式" : "选择单元格"}
-          onChange={(e) => {
-            if (!editing) setEditing(true);
-            setDraft(e.target.value);
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              commitDraft();
-              setEditing(false);
-              moveActive(1, 0);
-            } else if (e.key === "Escape") {
-              setEditing(false);
-              setDraft(data.cells[active ?? ""] ?? "");
-            }
-          }}
-          className="flex-1 rounded border border-gray-200 px-2 py-1 text-sm outline-none focus:border-zinc-800 disabled:bg-gray-50"
-        />
+        <div className="relative flex-1">
+          <input
+            value={formulaBarValue}
+            disabled={!canWrite || !active}
+            placeholder={active ? "输入内容或以 = 开始输入公式" : "选择单元格"}
+            onChange={(e) => {
+              if (!editing) setEditing(true);
+              setDraft(e.target.value);
+            }}
+            onKeyDown={onInputKeyDown}
+            className="w-full rounded border border-gray-200 px-2 py-1 text-sm outline-none focus:border-zinc-800 disabled:bg-gray-50"
+          />
+          {suggestions.length > 0 && suggestIdx >= 0 && (
+            <ul className="absolute left-0 top-full z-30 mt-0.5 max-h-56 min-w-[220px] overflow-auto rounded-md border border-gray-200 bg-white py-1 shadow-lg">
+              {suggestions.map((f, i) => (
+                <li
+                  key={f.name}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    applySuggestion(f.name);
+                  }}
+                  onMouseEnter={() => setSuggestIdx(i)}
+                  className={`cursor-pointer px-2 py-1 text-left ${
+                    i === suggestIdx ? "bg-zinc-100" : ""
+                  }`}
+                >
+                  <div className="text-xs font-medium text-zinc-800">
+                    {f.signature}
+                  </div>
+                  <div className="text-[11px] text-gray-400">{f.desc}</div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
         {canWrite && (
           <select
             value=""
@@ -450,6 +688,7 @@ export default function SheetEditor({
       </div>
 
       <div
+        ref={gridRef}
         className="flex-1 overflow-auto bg-white outline-none"
         tabIndex={0}
         onKeyDown={onGridKeyDown}
@@ -497,21 +736,47 @@ export default function SheetEditor({
                       }`}
                     >
                       {isEditingCell ? (
-                        <input
-                          ref={inputRef}
-                          value={draft}
-                          onChange={(e) => setDraft(e.target.value)}
-                          onKeyDown={onInputKeyDown}
-                          onBlur={() => {
-                            // 公式模式下点选/框选会使 input 失焦，此时不提交；
-                            // 仅在非公式模式失焦时提交并退出编辑
-                            if (!isFormula(draftRef.current)) {
-                              commitDraft();
-                              setEditing(false);
-                            }
-                          }}
-                          className="w-full min-w-[80px] outline-none"
-                        />
+                        <div className="relative">
+                          <input
+                            ref={inputRef}
+                            value={draft}
+                            onChange={(e) => setDraft(e.target.value)}
+                            onKeyDown={onInputKeyDown}
+                            onBlur={() => {
+                              // 公式模式下点选/框选会使 input 失焦，此时不提交；
+                              // 仅在非公式模式失焦时提交并退出编辑
+                              if (!isFormula(draftRef.current)) {
+                                commitDraft();
+                                setEditing(false);
+                              }
+                            }}
+                            className="w-full min-w-[80px] outline-none"
+                          />
+                          {suggestions.length > 0 && suggestIdx >= 0 && (
+                            <ul className="absolute left-0 top-full z-30 mt-0.5 max-h-56 min-w-[220px] overflow-auto rounded-md border border-gray-200 bg-white py-1 shadow-lg">
+                              {suggestions.map((f, i) => (
+                                <li
+                                  key={f.name}
+                                  onMouseDown={(e) => {
+                                    e.preventDefault();
+                                    applySuggestion(f.name);
+                                  }}
+                                  onMouseEnter={() => setSuggestIdx(i)}
+                                  className={`cursor-pointer px-2 py-1 text-left ${
+                                    i === suggestIdx ? "bg-zinc-100" : ""
+                                  }`}
+                                >
+                                  <div className="text-xs font-medium text-zinc-800">
+                                    {f.signature}
+                                  </div>
+                                  <div className="text-[11px] text-gray-400">
+                                    {f.desc}
+                                  </div>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
                       ) : (
                         <span className="block min-h-[20px] whitespace-nowrap">
                           {display}
