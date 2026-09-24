@@ -54,6 +54,16 @@ CREATE TABLE IF NOT EXISTS document_edit_logs (
   edit_time TEXT NOT NULL DEFAULT (datetime('now')),
   edit_type TEXT DEFAULT 'edit'
 );
+
+CREATE TABLE IF NOT EXISTS document_versions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  doc_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+  content TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'link',
+  created_by TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_document_versions_doc ON document_versions(doc_id, id DESC);
 `);
 
 export interface UserRow {
@@ -208,6 +218,55 @@ export const logsRepo = {
     db.prepare(
       "INSERT INTO document_edit_logs (doc_id, user_id, username, edit_type) VALUES (?, ?, ?, ?)"
     ).run(docId, userId, username, editType);
+  },
+};
+
+export interface VersionRow {
+  id: number;
+  doc_id: string;
+  content: string;
+  source: string;
+  created_by: string | null;
+  created_at: string;
+}
+
+// ---------- Versions ----------
+export const versionsRepo = {
+  create(
+    docId: string,
+    content: string,
+    source: string,
+    createdBy: string | null
+  ): number {
+    const info = db
+      .prepare(
+        "INSERT INTO document_versions (doc_id, content, source, created_by) VALUES (?, ?, ?, ?)"
+      )
+      .run(docId, content, source, createdBy);
+    return Number(info.lastInsertRowid);
+  },
+  /** 版本列表（不含 content，按时间倒序） */
+  list(docId: string): Omit<VersionRow, "content">[] {
+    return db
+      .prepare(
+        `SELECT id, doc_id, source, created_by, created_at
+         FROM document_versions WHERE doc_id = ? ORDER BY id DESC`
+      )
+      .all(docId) as Omit<VersionRow, "content">[];
+  },
+  get(id: number, docId: string): VersionRow | undefined {
+    return db
+      .prepare("SELECT * FROM document_versions WHERE id = ? AND doc_id = ?")
+      .get(id, docId) as VersionRow | undefined;
+  },
+  /** 取最新一条版本的内容（用于去重：内容未变则不重复记录） */
+  latestContent(docId: string): string | undefined {
+    const row = db
+      .prepare(
+        "SELECT content FROM document_versions WHERE doc_id = ? ORDER BY id DESC LIMIT 1"
+      )
+      .get(docId) as { content: string } | undefined;
+    return row?.content;
   },
 };
 

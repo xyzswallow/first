@@ -26,6 +26,17 @@ interface Room {
 
 const rooms = new Map<string, Room>();
 
+// WebSocket 客户端由自定义服务器（server.ts）管理，而版本恢复的 reload 广播
+// 由 Next API 路由触发。两处可能被打包成不同的模块实例，故把 rooms 挂到
+// globalThis 上共享，确保 broadcastReload 能找到活跃房间。
+const globalRooms = globalThis as unknown as {
+  __sheetRooms?: Map<string, Room>;
+};
+if (!globalRooms.__sheetRooms) {
+  globalRooms.__sheetRooms = rooms;
+}
+const sharedRooms = globalRooms.__sheetRooms;
+
 // ---- Yjs 消息类型（自定义精简协议）----
 // { t: 'sync-step1', v: base64 }  客户端发来自身 state vector -> 服务端回 diff
 // { t: 'sync-step2', v: base64 }  update 应用
@@ -33,7 +44,7 @@ const rooms = new Map<string, Room>();
 // { t: 'awareness', v: base64 }   awareness 广播（服务端仅转发）
 
 function getRoom(docId: string, type: "sheet" | "doc"): Room {
-  let room = rooms.get(docId);
+  let room = sharedRooms.get(docId);
   if (!room) {
     room = { docId, type, clients: new Set() };
     if (type === "doc") {
@@ -48,7 +59,7 @@ function getRoom(docId: string, type: "sheet" | "doc"): Room {
         }
       }
     }
-    rooms.set(docId, room);
+    sharedRooms.set(docId, room);
   }
   return room;
 }
@@ -115,7 +126,7 @@ export function addClient(
         );
       }
       if (room.saveTimer) clearTimeout(room.saveTimer);
-      rooms.delete(room.docId);
+      sharedRooms.delete(room.docId);
     }
   });
 
@@ -195,6 +206,17 @@ function broadcast(room: Room, from: Client, payload: unknown) {
   for (const c of room.clients) {
     if (c !== from) send(c.ws, payload);
   }
+}
+
+/**
+ * 版本恢复后调用：通知同房间所有客户端重新拉取快照。
+ * 由 HTTP API（versions 恢复接口）跨模块调用。
+ */
+export function broadcastReload(docId: string) {
+  const room = sharedRooms.get(docId);
+  if (!room) return;
+  const payload = { t: "reload" };
+  for (const c of room.clients) send(c.ws, payload);
 }
 
 function send(ws: WebSocket, payload: unknown) {

@@ -1,8 +1,10 @@
 "use client";
 
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import SheetEditor from "./editors/SheetEditor";
 import DocEditor from "./editors/DocEditor";
+import VersionHistory from "./VersionHistory";
 
 export default function ShareViewClient({
   docId,
@@ -18,6 +20,7 @@ export default function ShareViewClient({
   token: string;
 }) {
   const router = useRouter();
+  const [showHistory, setShowHistory] = useState(false);
   return (
     <div className="flex h-screen flex-col">
       <header className="flex items-center justify-between border-b border-gray-100 bg-white px-4 py-2">
@@ -30,12 +33,20 @@ export default function ShareViewClient({
             分享{canWrite ? "（可编辑）" : "（只读）"}
           </span>
         </div>
-        <button
-          onClick={() => router.push("/documents")}
-          className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-700 transition hover:bg-gray-50"
-        >
-          我的文档
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowHistory(true)}
+            className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-700 transition hover:bg-gray-50"
+          >
+            版本历史
+          </button>
+          <button
+            onClick={() => router.push("/documents")}
+            className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-700 transition hover:bg-gray-50"
+          >
+            我的文档
+          </button>
+        </div>
       </header>
       <div className="flex-1 overflow-hidden">
         {type === "doc" ? (
@@ -44,6 +55,14 @@ export default function ShareViewClient({
           <SheetEditor docId={docId} canWrite={canWrite} token={token} />
         )}
       </div>
+      {showHistory && (
+        <VersionHistory
+          docId={docId}
+          canWrite={canWrite}
+          token={token}
+          onClose={() => setShowHistory(false)}
+        />
+      )}
     </div>
   );
 }

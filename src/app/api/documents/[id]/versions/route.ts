@@ -3,7 +3,7 @@ import { snapshotsRepo, versionsRepo } from "@/server/db";
 import { currentUser } from "@/server/currentUser";
 import { accessForUser } from "@/server/access";
 
-// GET /api/documents/[id]/snapshot —— 读取快照内容
+// GET /api/documents/[id]/versions —— 版本列表（可读即可查看）
 export async function GET(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -16,16 +16,11 @@ export async function GET(
   if (!access.canRead)
     return NextResponse.json({ error: "无权访问" }, { status: 403 });
 
-  const content = snapshotsRepo.get(id) ?? "";
-  return NextResponse.json({ content });
+  return NextResponse.json({ versions: versionsRepo.list(id) });
 }
 
-// 版本记录节流：同一文档一段时间内只记录一次自动版本，避免防抖保存造成版本泛滥
-const VERSION_INTERVAL_MS = 60_000;
-const lastVersionAt = new Map<string, number>();
-
-// PUT /api/documents/[id]/snapshot —— 保存快照 { content }
-export async function PUT(
+// POST /api/documents/[id]/versions —— 手动创建版本快照（需可写）
+export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
@@ -37,21 +32,12 @@ export async function PUT(
   if (!access.canWrite)
     return NextResponse.json({ error: "无编辑权限" }, { status: 403 });
 
-  const body = await req.json().catch(() => ({}));
-  const content = typeof body.content === "string" ? body.content : "";
-  snapshotsRepo.save(id, content);
+  const content = snapshotsRepo.get(id) ?? "";
+  if (!content)
+    return NextResponse.json({ error: "文档暂无内容" }, { status: 400 });
 
-  // 自动记录版本：内容有变化 + 距上次记录已超过间隔
   const viaLink = !!token && !access.isOwner;
-  const now = Date.now();
-  const last = lastVersionAt.get(id) ?? 0;
-  if (content && now - last > VERSION_INTERVAL_MS) {
-    if (versionsRepo.latestContent(id) !== content) {
-      const who = user?.username ?? (viaLink ? "分享链接访客" : "匿名");
-      versionsRepo.create(id, content, viaLink ? "link" : "edit", who);
-      lastVersionAt.set(id, now);
-    }
-  }
-
-  return NextResponse.json({ ok: true });
+  const who = user?.username ?? (viaLink ? "分享链接访客" : "匿名");
+  const versionId = versionsRepo.create(id, content, "manual", who);
+  return NextResponse.json({ ok: true, id: versionId });
 }

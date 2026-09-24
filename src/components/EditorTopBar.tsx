@@ -10,12 +10,14 @@ export default function EditorTopBar({
   canWrite,
   isOwner,
   onShare,
+  onHistory,
 }: {
   docId: string;
   initialName: string;
   canWrite: boolean;
   isOwner: boolean;
   onShare?: () => void;
+  onHistory?: () => void;
 }) {
   const router = useRouter();
   const [name, setName] = useState(initialName);
@@ -65,14 +67,24 @@ export default function EditorTopBar({
           </span>
         )}
       </div>
-      {isOwner && onShare && (
-        <button
-          onClick={onShare}
-          className="rounded-lg bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-black"
-        >
-          分享
-        </button>
-      )}
+      <div className="flex items-center gap-2">
+        {onHistory && (
+          <button
+            onClick={onHistory}
+            className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-700 transition hover:bg-gray-50"
+          >
+            版本历史
+          </button>
+        )}
+        {isOwner && onShare && (
+          <button
+            onClick={onShare}
+            className="rounded-lg bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-black"
+          >
+            分享
+          </button>
+        )}
+      </div>
     </header>
   );
 }

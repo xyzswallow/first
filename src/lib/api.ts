@@ -1,4 +1,4 @@
-import type { DocumentListItem, DocType } from "./types";
+import type { DocumentListItem, DocType, VersionItem } from "./types";
 
 async function jsonOrThrow(res: Response) {
   const data = await res.json().catch(() => ({}));
@@ -34,5 +34,38 @@ export const api = {
   },
   async logout(): Promise<void> {
     await fetch("/api/auth/logout", { method: "POST" });
+  },
+  async listVersions(
+    id: string,
+    token?: string
+  ): Promise<VersionItem[]> {
+    const qs = token ? `?token=${encodeURIComponent(token)}` : "";
+    const res = await fetch(`/api/documents/${id}/versions${qs}`);
+    const data = await jsonOrThrow(res);
+    return data.versions;
+  },
+  async createVersion(id: string, token?: string): Promise<void> {
+    const qs = token ? `?token=${encodeURIComponent(token)}` : "";
+    const res = await fetch(`/api/documents/${id}/versions${qs}`, {
+      method: "POST",
+    });
+    await jsonOrThrow(res);
+  },
+  async getVersionContent(
+    id: string,
+    vid: number,
+    token?: string
+  ): Promise<string> {
+    const qs = token ? `?token=${encodeURIComponent(token)}` : "";
+    const res = await fetch(`/api/documents/${id}/versions/${vid}${qs}`);
+    const data = await jsonOrThrow(res);
+    return data.content;
+  },
+  async restoreVersion(id: string, vid: number, token?: string): Promise<void> {
+    const qs = token ? `?token=${encodeURIComponent(token)}` : "";
+    const res = await fetch(`/api/documents/${id}/versions/${vid}${qs}`, {
+      method: "POST",
+    });
+    await jsonOrThrow(res);
   },
 };

@@ -15,3 +15,11 @@ export interface SessionUser {
 }
 
 export type Permission = "read" | "edit";
+
+export interface VersionItem {
+  id: number;
+  doc_id: string;
+  source: string;
+  created_by: string | null;
+  created_at: string;
+}
