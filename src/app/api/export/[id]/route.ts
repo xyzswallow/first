@@ -1,6 +1,7 @@
 import { snapshotsRepo } from "@/server/db";
 import { currentUser } from "@/server/currentUser";
 import { accessForUser } from "@/server/access";
+import { computeSheet, isFormula } from "@/lib/formula";
 import ExcelJS from "exceljs";
 
 // GET /api/export/[id] —— 表格导出为 xlsx
@@ -36,14 +37,26 @@ export async function GET(
 
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet("Sheet1");
+  // 预先计算整张表的显示值，公式单元格导出其计算结果
+  const display = computeSheet(cells);
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
       const key = `${r}:${c}`;
-      const v = cells[key];
-      if (v !== undefined && v !== "") {
-        const num = Number(v);
-        ws.getCell(r + 1, c + 1).value =
-          v !== "" && !isNaN(num) ? num : v;
+      const raw = cells[key];
+      if (raw === undefined || raw === "") continue;
+      const cell = ws.getCell(r + 1, c + 1);
+      if (isFormula(raw)) {
+        // 公式单元格：保留公式并附带计算结果，Excel 打开后可见公式且显示结果
+        const shown = display[key] ?? "";
+        const num = Number(shown);
+        const result = shown !== "" && !isNaN(num) ? num : shown;
+        cell.value = {
+          formula: raw.trimStart().slice(1),
+          result,
+        };
+      } else {
+        const num = Number(raw);
+        cell.value = !isNaN(num) ? num : raw;
       }
     }
   }

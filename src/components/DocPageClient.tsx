@@ -32,7 +32,7 @@ export default function DocPageClient({
         onHistory={() => setShowHistory(true)}
       />
       <div className="flex-1 overflow-hidden">
-        <DocEditor docId={docId} canWrite={canWrite} token={token} />
+        <DocEditor docId={docId} canWrite={canWrite} token={token} docName={name} />
       </div>
       {showShare && (
         <ShareDialog docId={docId} onClose={() => setShowShare(false)} />

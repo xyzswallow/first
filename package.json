@@ -24,6 +24,7 @@
     "@tiptap/starter-kit": "^2.11.5",
     "bcryptjs": "^2.4.3",
     "better-sqlite3": "^11.8.1",
+    "docx": "^9.8.1",
     "exceljs": "^4.4.0",
     "iron-session": "^8.0.4",
     "lib0": "^0.2.99",
