@@ -14,6 +14,7 @@ import TextStyle from "@tiptap/extension-text-style";
 import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
 import Link from "@tiptap/extension-link";
+import { exportDocxFromJson } from "@/lib/docxExport";
 
 function toBase64(bytes: Uint8Array) {
   let bin = "";
@@ -31,10 +32,12 @@ export default function DocEditor({
   docId,
   canWrite,
   token,
+  docName,
 }: {
   docId: string;
   canWrite: boolean;
   token?: string;
+  docName?: string;
 }) {
   const ydocRef = useRef<Y.Doc>(new Y.Doc());
   const wsRef = useRef<WebSocket | null>(null);
@@ -138,11 +141,29 @@ export default function DocEditor({
     );
   }
 
+  async function handleExportDocx() {
+    if (!editor) return;
+    try {
+      await exportDocxFromJson(
+        editor.getJSON() as Parameters<typeof exportDocxFromJson>[0],
+        docName || "document"
+      );
+    } catch {
+      window.alert("导出失败，请重试");
+    }
+  }
+
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between border-b border-gray-100 bg-white px-4 py-2">
         {canWrite && <Toolbar editor={editor} />}
         <div className="ml-auto flex items-center gap-3 text-sm text-gray-500">
+          <button
+            onClick={handleExportDocx}
+            className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-700 transition hover:bg-gray-50"
+          >
+            导出 Word
+          </button>
           <span
             className={`inline-flex items-center gap-1 ${
               connected ? "text-emerald-600" : "text-gray-400"

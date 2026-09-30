@@ -212,7 +212,13 @@ export default function SheetEditor({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ content: JSON.stringify(dataRef.current) }),
     }).catch(() => {});
-    window.open(`/api/export/${docId}${tokenQS}`, "_blank");
+    // 用隐藏链接触发下载，避免 window.open 留下空白窗口
+    const a = document.createElement("a");
+    a.href = `/api/export/${docId}${tokenQS}`;
+    a.download = "";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
   }
 
   const inputRef = useRef<HTMLInputElement | null>(null);
